@@ -1,0 +1,120 @@
+SQL Workbench --Desenvolvido por Randerson Carvalho e Vinicius Souza
+
+USE zabbixdb;
+
+-- SELECT * FROM hosts ORDER BY host;zabbixdb_pingLoss
+
+-- SELECT * FROM items WHERE hostid = 10416; -- N7 = 10282
+
+CALL zabbixdb_pingLoss(34058, '2016-11-08', '2016-11-11');
+
+zabbixdb_pingLoss
+
+--SELECT * FROM history ht zabbixdb_pingLosszabbixdb_pingLoss
+-----------------------------------------------------------------------
+CREATE DEFINER=`zbx`@`%` PROCEDURE `zabbixdb_pingLoss`(IN _item_id INT, IN _diaInicial CHAR(10), IN _diaFinal CHAR(10))
+BEGIN
+	/*
+	SET item_id = 24440;
+
+	SET diaInicial  = '2015-07-31';
+	SET diaFinal    = '2015-08-25';
+
+	SET horaInicial = '00:00:00';
+	SET horaFinal   = '23:59:59';
+	*/
+	DECLARE _data   DATE DEFAULT '2000-01-01';
+	DECLARE _hora   TIME DEFAULT '00:00';
+	-- DECLARE dataAnt DATE DEFAULT '2000-01-01';
+	-- DECLARE horaAnt TIME DEFAULT '00:00';
+
+	-- Definição de variáveis utilizadas na Procedure
+	DECLARE existe_linhas BOOLEAN;
+
+	DECLARE dataHoraInicial DATETIME DEFAULT CONCAT(_diaInicial, CONCAT(' 00:00:00'));
+	DECLARE dataHoraFinal   DATETIME DEFAULT CONCAT(_diaFinal, CONCAT(' 23:59:59'));
+
+	-- Definição do cursor
+	DECLARE meuCursor CURSOR FOR 
+	SELECT DATE_FORMAT(FROM_UNIXTIME(ht.clock), '%Y-%m-%d') AS _data,
+	       DATE_FORMAT(FROM_UNIXTIME(ht.clock), '%H:%i') AS _hora
+	FROM history ht    
+	WHERE ht.itemid = _item_id -- icmppingloss = 24440 -- icmpping = 24439  -- icmppingsec = 24441
+	      AND ht.value = 100
+	      AND ht.clock >= UNIX_TIMESTAMP(dataHoraInicial)
+	      AND ht.clock <= UNIX_TIMESTAMP(dataHoraFinal)
+	ORDER BY ht.clock;
+
+	-- Definição da variável de controle de looping do cursor
+	DECLARE CONTINUE HANDLER FOR NOT FOUND SET existe_linhas = TRUE;
+
+	-- DROP TEMPORARY TABLE tmp_relatorio_icmp_loss;
+	-- DELETE FROM tmp_relatorio_icmp_loss WHERE itemid = _itemid;
+	DROP TEMPORARY TABLE IF EXISTS tmp_relatorio_icmp_loss;
+
+	CREATE TEMPORARY TABLE tmp_relatorio_icmp_loss (
+		itemid BIGINT(20),
+		dataT CHAR(10),
+		horaIni CHAR(5),
+		horaFim CHAR(5),
+		difHoras CHAR(5)
+	) ENGINE=MEMORY;
+
+	SET @dataAnt = '2000-01-01';
+	SET @horaAnt = '00:00';
+
+	-- Abertura do cursor
+	OPEN meuCursor;
+
+	-- Looping de execução do cursor
+	meuLoop: LOOP
+	FETCH meuCursor INTO _data, _hora;
+
+		SET @horaSelect = (SELECT horaIni FROM tmp_relatorio_icmp_loss WHERE itemid = _item_id ORDER BY dataT DESC, horaIni DESC LIMIT 1);
+        IF (@horaSelect IS NULL) THEN
+			SET @horaSelect = 0;
+		END IF;
+		SET @_horaSelect = (SELECT TIME_TO_SEC(@horaSelect));
+		SET @_difHoras = (SELECT TIMEDIFF(@horaAnt, @horaSelect));
+		IF ((SELECT DATEDIFF(_data, @dataAnt)) > 0) THEN
+			IF (@_horaSelect > 60 OR @horaSelect = '00:00') THEN
+				UPDATE tmp_relatorio_icmp_loss 
+				SET horaFim = @horaAnt, difHoras = @_difHoras
+				WHERE itemid = _item_id ORDER BY dataT DESC, horaIni DESC LIMIT 1;
+			END IF;
+			INSERT INTO tmp_relatorio_icmp_loss (itemid, dataT, horaIni)
+			VALUES (_item_id, _data, _hora);
+		ELSE
+			SET @_dif_Horas = (SELECT TIME_TO_SEC((SELECT TIMEDIFF(_hora, @horaAnt))));
+			IF ((SELECT @_dif_Horas) > 60) THEN
+				UPDATE tmp_relatorio_icmp_loss 
+				SET horaFim = @horaAnt, difHoras = @_difHoras
+				WHERE itemid = _item_id ORDER BY dataT DESC, horaIni DESC LIMIT 1;
+				INSERT INTO tmp_relatorio_icmp_loss (itemid, dataT, horaIni)
+				VALUES (_item_id, _data, _hora);
+			END IF;
+		END IF;
+
+		SET @dataAnt = _data;
+		SET @horaAnt = _hora;
+
+		-- Controle de existir mais registros na tabela
+		IF existe_linhas THEN
+			CLOSE meuCursor;
+			LEAVE meuLoop;
+		END IF;
+	END LOOP meuLoop;
+	-- END
+
+	SET @horaSelect = (SELECT horaIni FROM tmp_relatorio_icmp_loss WHERE itemid = _item_id ORDER BY dataT DESC, horaIni DESC LIMIT 1);
+	-- SET @horaSelect = (SELECT TIME_TO_SEC(@horaSelect));
+	SET @_difHoras = (SELECT TIMEDIFF(@horaAnt, @horaSelect));
+	
+	UPDATE tmp_relatorio_icmp_loss SET horaFim = @horaAnt, difHoras = @_difHoras
+	WHERE itemid = _item_id ORDER BY dataT DESC, horaIni DESC LIMIT 1;
+
+	-- Select de retorno
+	SELECT * FROM tmp_relatorio_icmp_loss;
+
+
+END
